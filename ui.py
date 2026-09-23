@@ -19,7 +19,7 @@ PAGE = r"""<!doctype html>
   .banner { padding:10px 20px; font-weight:600; }
   .banner.dry { background:#e7f0ff; color:#123d7a; }
   .banner.live { background:var(--bad); color:#fff; font-size:16px; }
-  main { max-width:1100px; margin:0 auto; padding:16px 20px 60px; }
+  main { max-width:860px; margin:0 auto; padding:16px 20px 60px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:14px; }
   .card h2 { font-size:14px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
   input, select, textarea, button { font:inherit; }
@@ -29,6 +29,8 @@ PAGE = r"""<!doctype html>
   button.secondary { background:#fff; color:var(--accent); }
   button.danger { background:var(--bad); border-color:var(--bad); }
   button:disabled { opacity:.5; cursor:default; }
+  button.link { background:none; border:none; color:var(--accent); padding:4px 6px; text-decoration:underline; }
+  #formCard .grid > div b { font-size:16px; }
   .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   .grid { display:grid; grid-template-columns: 180px 1fr; gap:8px 14px; align-items:start; }
   .grid > label { color:var(--muted); padding-top:7px; }
@@ -54,56 +56,53 @@ PAGE = r"""<!doctype html>
 <div id="banner" class="banner dry"></div>
 <main>
   <div class="card">
-    <h2>1. AI number</h2>
     <form id="lookupForm" class="row">
-      <input id="ai" type="text" autocomplete="off" placeholder="e.g. 1948" autofocus>
+      <input id="ai" type="text" autocomplete="off" placeholder="AI number, e.g. 1948" autofocus>
       <button type="submit">Look up</button>
-      <span class="src">Type or scan. Accepts 1948, AI1948, 01948.</span>
     </form>
     <div id="lookupMsgs"></div>
-  </div>
-
-  <div class="card hidden" id="sheetCard">
-    <h2>Spreadsheet (reference only)</h2>
-    <div id="sheetInfo"></div>
-  </div>
-
-  <div class="card hidden" id="lotsCard">
-    <h2>2. Unit in Odoo</h2>
-    <div id="lotsInfo"></div>
+    <div id="lotPicker"></div>
   </div>
 
   <div class="card hidden" id="formCard">
-    <h2>3. Verify and create repair order</h2>
     <div class="grid">
-      <label>Product to repair</label><div><b id="fProduct"></b><div class="src" id="fProductSrc"></div></div>
-      <label>Lot / serial</label><div><b id="fLot"></b><div class="src" id="fLotSrc"></div></div>
       <label>Customer</label>
       <div>
-        <b id="fPartner">&mdash;</b> <span class="src" id="fPartnerSrc"></span>
-        <div class="row" style="margin-top:6px">
-          <input id="partnerQ" type="text" placeholder="Search existing customers (name, company, CUIT)&hellip;" style="max-width:420px">
-          <button type="button" class="secondary" id="partnerBtn">Search</button>
+        <b id="fPartner">&mdash;</b> <button type="button" class="link" id="changePartner">change</button>
+        <div id="partnerBox" class="hidden">
+          <div class="row" style="margin-top:6px">
+            <input id="partnerQ" type="text" placeholder="Search existing customers (name, company, CUIT)&hellip;" style="max-width:420px">
+            <button type="button" class="secondary" id="partnerBtn">Search</button>
+          </div>
+          <div class="src">Only existing Odoo contacts. This tool never creates customers.</div>
+          <div id="partnerResults"></div>
         </div>
-        <div class="src">Only existing Odoo contacts can be chosen. This tool never creates customers.</div>
-        <div id="partnerResults"></div>
       </div>
-      <label>Scheduled date</label><div><input id="fDate" type="datetime-local" style="max-width:260px"></div>
-      <label>Responsible</label><div id="fUser">&mdash;</div>
-      <label>Tags</label><div class="tags" id="fTags"><span class="src">none available</span></div>
-      <label>Under warranty</label><div><input id="fWarranty" type="checkbox"></div>
-      <label>Notes</label><div><textarea id="fNotes" rows="3" placeholder="Reported fault, accessories received&hellip;"></textarea></div>
-      <label class="dup hidden">Open repair exists</label><div class="dup hidden"><label><input type="checkbox" id="fDup"> create anyway</label></div>
+      <label>Equipment</label><div><b id="fProduct"></b></div>
+      <label>Serial number</label><div><b id="fLot"></b> <span class="src" id="fLotSrc"></span></div>
+      <label class="dup hidden">Open repair</label><div class="dup hidden"><span class="msg warn" style="padding:2px 6px" id="dupText"></span> <label><input type="checkbox" id="fDup"> create anyway</label></div>
     </div>
+
     <div class="row" style="margin-top:14px">
-      <button type="button" class="secondary" id="previewBtn">Preview payload (dry-run)</button>
       <button type="button" id="createBtn">Create repair order</button>
+      <button type="button" class="link" id="previewBtn">preview what would be sent</button>
     </div>
     <div id="createMsgs"></div>
-    <pre id="payload" class="hidden"></pre>
+    <details id="payloadBox" class="hidden"><summary class="src">Technical detail: exact data sent to Odoo</summary><pre id="payload"></pre></details>
+
+    <details style="margin-top:12px"><summary>More options (date, tags, warranty, notes)</summary>
+      <div class="grid" style="margin-top:8px">
+        <label>Scheduled date</label><div><input id="fDate" type="datetime-local" style="max-width:260px"></div>
+        <label>Responsible</label><div id="fUser">&mdash;</div>
+        <label>Tags</label><div class="tags" id="fTags"><span class="src">none available</span></div>
+        <label>Under warranty</label><div><input id="fWarranty" type="checkbox"></div>
+        <label>Notes</label><div><textarea id="fNotes" rows="3" placeholder="Reported fault, accessories received&hellip;"></textarea></div>
+      </div>
+    </details>
+    <details style="margin-top:6px"><summary>Unit history and where the data came from</summary><div id="history" style="margin-top:8px"></div></details>
   </div>
 
-  <details class="card"><summary>Diagnostics (fields_get)</summary><div class="row" style="margin-top:8px"><button type="button" class="secondary" id="diagBtn">Load</button><button type="button" class="secondary" id="reloadBtn">Reload config + spreadsheet</button></div><pre id="diag" class="hidden"></pre></details>
+  <details class="card"><summary>Diagnostics</summary><div class="row" style="margin-top:8px"><button type="button" class="secondary" id="diagBtn">Load fields_get</button><button type="button" class="secondary" id="reloadBtn">Reload config + spreadsheet</button></div><pre id="diag" class="hidden"></pre></details>
 </main>
 <script>
 const TOKEN = __TOKEN__;
@@ -112,6 +111,7 @@ let state = { status:null, lookup:null, lotEntry:null, partner:null };
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const m2o = v => Array.isArray(v) ? v[1] : "";
+const productName = e => e.product ? e.product.display_name : m2o(e.lot.product_id);
 
 async function api(path, body) {
   const opts = { headers: { "X-Intake-Token": TOKEN } };
@@ -125,19 +125,16 @@ function msgs(el, list, cls) { el.insertAdjacentHTML("beforeend", list.map(m => 
 
 function renderBanner() {
   const b = $("banner");
-  if (LIVE) { b.className = "banner live"; b.textContent = "LIVE MODE — 'Create repair order' writes to Odoo. Repair orders cannot be deleted."; $("createBtn").className = "danger"; }
-  else { b.className = "banner dry"; b.textContent = "Dry-run mode — every lookup is real, but nothing is created. The exact payload is shown instead."; $("createBtn").textContent = "Create repair order (dry-run)"; }
+  if (LIVE) { b.className = "banner live"; b.textContent = "LIVE MODE — creating writes to Odoo. Repair orders cannot be deleted."; $("createBtn").className = "danger"; $("previewBtn").classList.remove("hidden"); }
+  else { b.className = "banner dry"; b.textContent = "Dry-run: lookups are real, nothing is created."; $("createBtn").textContent = "Create repair order (dry-run)"; $("previewBtn").classList.add("hidden"); }
 }
 
 async function loadStatus() {
   try {
     const s = await api("/api/status");
     state.status = s; LIVE = s.live_mode; renderBanner();
-    const sheet = s.spreadsheet_error ? "spreadsheet ERROR: " + s.spreadsheet_error
-      : `spreadsheet: ${s.spreadsheet.ais} AIs, ${s.spreadsheet.with_serial} with serial`;
-    $("status").textContent = s.odoo_ok
-      ? `Odoo ${s.server_version || ""} · ${s.database} · ${s.user_name || s.username} · ${sheet}`
-      : `Odoo NOT connected: ${s.odoo_error} · ${sheet}`;
+    const sheet = s.spreadsheet_error ? "spreadsheet ERROR: " + s.spreadsheet_error : `${s.spreadsheet.ais} AIs in spreadsheet`;
+    $("status").textContent = s.odoo_ok ? `${s.user_name || s.username} · ${sheet}` : `Odoo NOT connected: ${s.odoo_error} · ${sheet}`;
     $("fUser").textContent = s.user_name || "—";
     const tags = s.tags || [];
     if (tags.length) $("fTags").innerHTML = tags.map(t =>
@@ -149,68 +146,67 @@ $("lookupForm").onsubmit = async ev => {
   ev.preventDefault();
   const ai = $("ai").value.trim(); if (!ai) return;
   const out = $("lookupMsgs"); out.innerHTML = '<div class="src">Looking up&hellip;</div>';
-  ["sheetCard","lotsCard","formCard"].forEach(id => $(id).classList.add("hidden"));
-  $("payload").classList.add("hidden"); $("createMsgs").innerHTML = "";
+  $("lotPicker").innerHTML = ""; $("formCard").classList.add("hidden");
+  $("payloadBox").classList.add("hidden"); $("createMsgs").innerHTML = "";
   try {
     const r = await api("/api/lookup?ai=" + encodeURIComponent(ai));
     out.innerHTML = "";
     if (!r.ok) { msgs(out, [r.error], "bad"); return; }
     state.lookup = r; state.lotEntry = null; state.partner = null;
-    msgs(out, r.warnings, "warn");
-    renderSheet(r); renderLots(r);
-    if (r.lots.length === 1) pickLot(0);
+    msgs(out, r.warnings.filter(w => !/lots match; pick|^No lot\/serial found/.test(w)), "warn");
+    if (!r.lots.length) {
+      const serial = r.sheet.serial ? ` (spreadsheet serial ${r.sheet.serial})` : "";
+      msgs(out, [`AI ${r.ai} has no lot in Odoo${serial}. Create this repair order by hand in Odoo.`], "bad");
+    } else if (r.lots.length === 1) pickLot(0);
+    else renderPicker(r);
   } catch (e) { out.innerHTML = ""; msgs(out, [e.message], "bad"); }
   $("ai").select();
 };
 
-function renderSheet(r) {
-  $("sheetCard").classList.remove("hidden");
-  if (!r.sheet.rows.length) { $("sheetInfo").innerHTML = `<div class="msg warn">AI ${r.ai} is not in the spreadsheet.</div>`; return; }
-  $("sheetInfo").innerHTML = `<table><tr><th>Row</th><th>AI</th><th>Model</th><th>Serial (manufacturer)</th><th>Version</th><th>Status</th><th>Date</th><th>Customer (as typed)</th></tr>` +
-    r.sheet.rows.map(x => `<tr><td>${x.row}</td><td>${x.ai}</td><td>${esc(x.model)}</td><td><b>${esc(x.serial)}</b></td><td>${esc(x.version)}</td><td>${esc(x.status)}</td><td>${esc(x.date)}</td><td>${esc(x.customer)}</td></tr>`).join("") +
-    `</table><div class="src">The spreadsheet is only used to get the manufacturer serial. Product and customer come from Odoo.</div>`;
-}
-
-function renderLots(r) {
-  $("lotsCard").classList.remove("hidden");
-  let h = r.lots.length
-    ? `<div class="src">${r.lots.length > 1 ? "Several lots match — click the right one." : "One lot matches."}</div>
-       <table><tr><th>Lot / serial</th><th>Why it matched</th><th>Product</th><th>Customer (Odoo)</th><th>Repairs</th></tr>` +
-       r.lots.map((e, i) => `<tr class="pick" id="lot${i}" onclick="pickLot(${i})"><td><b>${esc(e.lot.name)}</b>${e.lot.ref ? `<div class="src">ref ${esc(e.lot.ref)}</div>` : ""}${e.note ? `<div class="src">${esc(e.note)}</div>` : ""}</td>
-         <td class="src">${e.match.map(m => m.startsWith("possible") ? `<span class="msg warn" style="padding:1px 5px">${esc(m)}</span>` : esc(m)).join("<br>")}</td>
-         <td>${esc(e.product ? e.product.display_name : m2o(e.lot.product_id))}</td>
-         <td>${e.customer ? esc(e.customer.name) + `<div class="src">${esc(e.customer_source)}</div>` : '<span class="src">unknown</span>'}</td>
-         <td>${e.repairs.length}${e.open_repairs.length ? ` <span class="msg warn" style="padding:1px 5px">open: ${esc(e.open_repairs.join(", "))}</span>` : ""}</td></tr>`).join("") + `</table>`
-    : `<div class="msg bad">No matching lot/serial in Odoo. Nothing can be created for this unit until the lot exists (this tool never creates lots).</div>`;
-  h += `<details style="margin-top:8px"><summary>Search steps</summary><pre>${esc(r.steps.join("\n"))}</pre></details>`;
-  $("lotsInfo").innerHTML = h;
+function renderPicker(r) {
+  $("lotPicker").innerHTML = `<div class="src" style="margin-top:8px">${r.lots.length} units match — pick one:</div><table>` +
+    r.lots.map((e, i) => `<tr class="pick" id="lot${i}" onclick="pickLot(${i})"><td><b>${esc(e.lot.name)}</b></td><td>${esc(productName(e))}</td>
+      <td>${e.customer ? esc(e.customer.name) : '<span class="src">no customer yet</span>'}</td>
+      <td class="src">${e.repairs.length} repair(s)${e.match.some(m => m.startsWith("possible")) ? " · partial match" : ""}</td></tr>`).join("") + `</table>`;
 }
 
 function pickLot(i) {
   const e = state.lookup.lots[i]; state.lotEntry = e;
-  document.querySelectorAll("tr.pick").forEach(tr => tr.classList.remove("sel")); $("lot" + i).classList.add("sel");
-  $("formCard").classList.remove("hidden");
-  $("fProduct").textContent = e.product ? e.product.display_name : m2o(e.lot.product_id);
-  $("fProductSrc").textContent = "from Odoo (product of the lot)";
+  document.querySelectorAll("#lotPicker tr.pick").forEach(tr => tr.classList.remove("sel"));
+  if ($("lot" + i)) $("lot" + i).classList.add("sel");
+  $("formCard").classList.remove("hidden"); $("createMsgs").innerHTML = ""; $("payloadBox").classList.add("hidden");
+  $("fProduct").textContent = productName(e);
   $("fLot").textContent = e.lot.name;
-  const sheetSerial = state.lookup.sheet.serial;
-  $("fLotSrc").textContent = "from Odoo (" + e.match.join("; ") + ") · " + (sheetSerial ? `spreadsheet says ${sheetSerial}` : "no serial in spreadsheet");
-  setPartner(e.customer ? { id: e.customer.id, name: e.customer.name } : null, e.customer_source || "not found in Odoo — search below");
+  $("fLotSrc").textContent = `AI ${state.lookup.ai}`;
+  setPartner(e.customer ? { id: e.customer.id, name: e.customer.name } : null);
+  $("partnerBox").classList.toggle("hidden", !!e.customer);
   const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   if (!$("fDate").value) $("fDate").value = d.toISOString().slice(0, 16);
   document.querySelectorAll(".dup").forEach(x => x.classList.toggle("hidden", !e.open_repairs.length));
+  $("dupText").textContent = e.open_repairs.join(", ") + " still open";
   $("fDup").checked = false;
-  let rh = e.repairs.length ? `<h2 style="margin-top:12px">Previous repairs of this unit</h2><table><tr><th>Ref</th><th>Customer</th><th>State</th><th>Scheduled</th><th>Created</th></tr>` +
-    e.repairs.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(m2o(x.partner_id))}</td><td>${esc(x.state)}</td><td>${esc(x.schedule_date || "")}</td><td>${esc(x.create_date || "")}</td></tr>`).join("") + `</table>` : `<div class="src" style="margin-top:8px">No previous repairs for this lot.</div>`;
-  const old = $("repairsHist"); if (old) old.remove();
-  $("lotsInfo").insertAdjacentHTML("beforeend", `<div id="repairsHist">${rh}</div>`);
+  renderHistory(e);
 }
 
-function setPartner(p, src) {
-  state.partner = p;
-  $("fPartner").textContent = p ? p.name : "— none selected —";
-  $("fPartnerSrc").textContent = src ? "(" + src + ")" : "";
+function renderHistory(e) {
+  const r = state.lookup;
+  let h = `<div class="src"><b>Customer:</b> ${esc(e.customer_source || "not found in Odoo")}<br>
+    <b>Equipment and serial:</b> from the Odoo lot — ${esc(e.match.join("; "))}${e.note ? " — " + esc(e.note) : ""}${e.lot.ref ? ` — lot ref ${esc(e.lot.ref)}` : ""}</div>`;
+  h += e.repairs.length ? `<table style="margin-top:8px"><tr><th>Previous repair</th><th>Customer</th><th>State</th><th>Created</th></tr>` +
+    e.repairs.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(m2o(x.partner_id))}</td><td>${esc(x.state)}</td><td>${esc((x.create_date || "").slice(0, 10))}</td></tr>`).join("") + `</table>`
+    : `<div class="src" style="margin-top:8px">No previous repairs for this unit.</div>`;
+  h += r.sheet.rows.length ? `<table style="margin-top:8px"><tr><th>Spreadsheet row</th><th>Model</th><th>Serial</th><th>Customer (as typed)</th></tr>` +
+    r.sheet.rows.map(x => `<tr><td>${x.row}</td><td>${esc(x.model)}</td><td>${esc(x.serial)}</td><td>${esc(x.customer)}</td></tr>`).join("") + `</table>`
+    : `<div class="src" style="margin-top:8px">AI not in the spreadsheet.</div>`;
+  h += `<details style="margin-top:8px"><summary>Search steps</summary><pre>${esc(r.steps.join("\n"))}</pre></details>`;
+  $("history").innerHTML = h;
 }
+
+function setPartner(p) {
+  state.partner = p;
+  $("fPartner").textContent = p ? p.name : "— none: search below —";
+}
+$("changePartner").onclick = () => { $("partnerBox").classList.toggle("hidden"); $("partnerQ").focus(); };
 
 async function searchPartners() {
   const q = $("partnerQ").value.trim(); const box = $("partnerResults");
@@ -219,10 +215,11 @@ async function searchPartners() {
   try {
     const rows = await api("/api/partners?q=" + encodeURIComponent(q));
     box.innerHTML = rows.length ? `<table>` + rows.map(p =>
-      `<tr class="pick" data-id="${p.id}" data-name="${esc(p.display_name)}"><td>${esc(p.display_name)}</td><td class="src">${p.is_company ? "company" : "contact"}${p.vat ? " · " + esc(p.vat) : ""}${p.city ? " · " + esc(p.city) : ""} · id ${p.id}</td></tr>`).join("") + `</table>`
-      : '<div class="msg warn">No existing customer matches. Refine the search — new customers must be created in Odoo by whoever manages contacts.</div>';
+      `<tr class="pick" data-id="${p.id}" data-name="${esc(p.display_name)}"><td>${esc(p.display_name)}</td><td class="src">${p.is_company ? "company" : "contact"}${p.vat ? " · " + esc(p.vat) : ""}${p.city ? " · " + esc(p.city) : ""}</td></tr>`).join("") + `</table>`
+      : '<div class="msg warn">No existing customer matches. New customers are created in Odoo by whoever manages contacts.</div>';
     box.querySelectorAll("tr.pick").forEach(tr => tr.onclick = () => {
-      setPartner({ id: parseInt(tr.dataset.id, 10), name: tr.dataset.name }, "chosen by you from Odoo"); box.innerHTML = "";
+      setPartner({ id: parseInt(tr.dataset.id, 10), name: tr.dataset.name });
+      box.innerHTML = ""; $("partnerBox").classList.add("hidden");
     });
   } catch (e) { box.innerHTML = `<div class="msg bad">${esc(e.message)}</div>`; }
 }
@@ -241,13 +238,13 @@ function formBody() {
 }
 
 async function submit(preview) {
-  const out = $("createMsgs"); out.innerHTML = ""; $("payload").classList.add("hidden");
-  if (!state.lotEntry) { msgs(out, ["Pick a lot first."], "bad"); return; }
+  const out = $("createMsgs"); out.innerHTML = ""; $("payloadBox").classList.add("hidden");
+  if (!state.lotEntry) { msgs(out, ["Pick a unit first."], "bad"); return; }
   if (!state.partner) { msgs(out, ["Choose an existing customer first."], "bad"); return; }
   const body = formBody();
   if (LIVE && !preview) {
     const typed = window.prompt(`LIVE MODE: this creates a repair order in Odoo that CANNOT be deleted.\n\n` +
-      `Unit: ${$("fProduct").textContent} — lot ${state.lotEntry.lot.name}\nCustomer: ${state.partner.name}\n\n` +
+      `Customer: ${state.partner.name}\nEquipment: ${$("fProduct").textContent}\nSerial: ${state.lotEntry.lot.name}\n\n` +
       `Type the AI number (${state.lookup.ai}) to confirm:`);
     if (typed === null) return;
     body.confirm = true; body.confirm_ai = typed.trim();
@@ -257,12 +254,13 @@ async function submit(preview) {
   try {
     const r = await api("/api/create", body);
     msgs(out, r.warnings || [], "warn");
-    if (r.dry_run) msgs(out, ["Dry-run: nothing was created. This is exactly what would be sent to repair.order.create:"], "ok");
-    else msgs(out, [`Created ${r.name || ("repair.order id " + r.id)} in Odoo.`], "ok");
+    const what = `${state.partner.name} · ${$("fProduct").textContent} · serial ${state.lotEntry.lot.name}`;
+    if (r.dry_run) msgs(out, [`OK — Odoo would accept this repair order: ${what}. Nothing was created (dry-run).`], "ok");
+    else msgs(out, [`Created ${r.name || ("repair.order id " + r.id)} in Odoo: ${what}.`], "ok");
     let shown = JSON.stringify(r.payload, null, 2);
     if (r.odoo_would_fill && Object.keys(r.odoo_would_fill).length)
       shown += "\n\n// Odoo fills in by itself (simulated, nothing saved):\n" + JSON.stringify(r.odoo_would_fill, null, 2);
-    $("payload").textContent = shown; $("payload").classList.remove("hidden");
+    $("payload").textContent = shown; $("payloadBox").classList.remove("hidden");
   } catch (e) { msgs(out, [e.message], "bad"); }
   finally { setTimeout(() => { $("createBtn").disabled = $("previewBtn").disabled = false; }, LIVE && !preview ? 3000 : 0); }
 }
