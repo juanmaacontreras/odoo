@@ -127,15 +127,19 @@ def search_needles(serial):
     return needles
 
 
-def ai_in_ref(ai, ref):
-    """True if a lot reference like 'AI01948', 'AI 1948' or 'AI00115 , AI01948' names this AI."""
+def ref_ais(ref):
+    """AI numbers named in a lot reference: 'AI01948', 's/n: AI01631', 'AI00115 , AI00116', '1948'."""
     ref = (ref or "").strip()
     if not ref:
-        return False
-    numbers = [int(n) for n in re.findall(r"(?i)\bAI\s*[-#:]?\s*(\d{1,7})\b", ref)]
+        return []
+    numbers = [int(n) for n in re.findall(r"(?i)AI\s*[-#:]?\s*(\d{1,7})\b", ref)]
     if re.fullmatch(r"0*\d{1,5}", ref):
         numbers.append(int(ref))
-    return ai in numbers
+    return numbers
+
+
+def ai_in_ref(ai, ref):
+    return ai in ref_ais(ref)
 
 
 def longest_digit_run(serial, minimum=6):
@@ -155,9 +159,12 @@ class EquipmentIndex:
         self.source = source
         self.by_ai = {}
         self.by_serial = {}
+        self.unparsed = []  # rows with something in column A that is not an AI number
         for row in rows:
             ai = row.get("ai")
             if not ai:
+                if str(row.get("ai_raw") or "").strip():
+                    self.unparsed.append(row)
                 continue
             self.by_ai.setdefault(ai, []).append(row)
             if not is_junk_serial(row.get("serial")):
@@ -184,6 +191,8 @@ class EquipmentIndex:
                 date = cell_to_text(date)
             rows.append({
                 "ai": ai,
+                "ai_raw": vals[0] if isinstance(vals[0], str) else cell_to_text(vals[0]) if vals[0] != "" else "",
+                "ai_raw_type": type(vals[0]).__name__,
                 "row": r + 1,
                 "status": cell_to_text(vals[1]),
                 "date": date,
@@ -201,6 +210,8 @@ class EquipmentIndex:
             "ais": len(self.by_ai),
             "with_serial": sum(1 for r in rows if not is_junk_serial(r["serial"])),
             "shared_serials": sum(1 for s in self.by_serial.values() if len(s) > 1),
+            "ais_in_several_rows": sum(1 for rs in self.by_ai.values() if len(rs) > 1),
+            "unparsed_ai_cells": len(self.unparsed),
         }
 
     def lookup(self, ai):
@@ -259,6 +270,13 @@ REPAIR_FIELD_CANDIDATES = {
     "company": ["company_id"],
 }
 
+# Computed+stored fields that fields_get reports as read-only but that the Odoo web form
+# sends on create (repair.order.lot_id in Odoo 17). They are sent and checked after the simulation.
+WRITABLE_READONLY = {"lot_id"}
+
+# Odoo 17 computes these from the operation type when the record is created.
+KNOWN_COMPUTED_ON_CREATE = {"location_id", "location_dest_id", "parts_location_id", "recycle_location_id"}
+
 WRITE_FORBIDDEN_MODELS = {"res.partner", "product.product", "product.template", "stock.lot",
                           "stock.production.lot"}
 
@@ -313,7 +331,7 @@ class OdooClient:
                                                             "name_create", "load"):
             raise GuardError("Refusing %s on %s: this tool never modifies %s." % (method, model, model))
         if method not in ("fields_get", "search_read", "search", "search_count", "read",
-                          "check_access_rights", "default_get") and not (model == "repair.order" and method == "create"):
+                          "check_access_rights", "default_get", "onchange") and not (model == "repair.order" and method == "create"):
             raise GuardError("Method %s.%s is not allowed by this tool." % (model, method))
         return self._rpc("object", "execute_kw",
                          [self.db, self.uid, self._key, model, method, args or [], kwargs or {}])
@@ -348,7 +366,7 @@ class OdooClient:
             f = meta.get(name)
             if f is None:
                 raise GuardError("Field %r does not exist on repair.order in this Odoo." % name)
-            if f.get("readonly"):
+            if f.get("readonly") and name not in WRITABLE_READONLY:
                 warnings.append("Field %s is read-only in this Odoo; not sent." % name)
                 continue
             ftype = f.get("type")
@@ -394,25 +412,56 @@ class OdooClient:
                 raise GuardError("%s: id(s) %s not found (or archived) in %s." % (name, ids, relation))
         return clean, warnings
 
-    def missing_required(self, vals):
-        """Required repair.order fields that are neither in vals nor defaulted by Odoo."""
+    def simulate(self, vals):
+        """Ask Odoo to compute a NEW repair order from vals without saving it (the same
+        'onchange' call the web form makes while you fill it in). Returns {field: value}."""
         meta = self.fields("repair.order")
-        absent = sorted(k for k, v in meta.items() if v.get("required") and k not in vals)
-        if not absent:
-            return []
-        defaults = self.execute("repair.order", "default_get", [absent])
-        return [k for k in absent if defaults.get(k) in (None, False, "", [])]
+        wanted = {k for k, v in meta.items() if v.get("required")} | set(vals) | {
+            "lot_id", "product_uom", "location_id", "location_dest_id", "picking_type_id", "company_id"}
+        spec = {k: {} for k in sorted(wanted) if k in meta}
+        res = self.execute("repair.order", "onchange", [[], dict(vals), [], spec])
+        out = {}
+        for k, v in ((res or {}).get("value") or {}).items():
+            if isinstance(v, dict):
+                v = [v.get("id"), v.get("display_name")] if v.get("id") else False
+            out[k] = v
+        return out
+
+    def check_against_odoo(self, vals):
+        """Returns (would_fill, problems). Uses the simulation; falls back to default_get."""
+        meta = self.fields("repair.order")
+        required = sorted(k for k, v in meta.items() if v.get("required") and k not in vals)
+        problems = []
+        try:
+            sim = self.simulate(vals)
+        except (OdooError, GuardError) as e:
+            sim = None
+            defaults = self.execute("repair.order", "default_get", [required]) if required else {}
+            missing = [k for k in required if defaults.get(k) in (None, False, "", [])
+                       and k not in KNOWN_COMPUTED_ON_CREATE]
+            if missing:
+                problems.append("Required field(s) without value or default: %s." % ", ".join(missing))
+            return {"simulation": "unavailable (%s)" % e}, problems
+        missing = [k for k in required if sim.get(k) in (None, False, "", [])]
+        if missing:
+            problems.append("Required field(s) Odoo would leave empty: %s." % ", ".join(missing))
+        for k, v in vals.items():
+            if meta.get(k, {}).get("type") == "many2one":
+                got = sim.get(k)
+                got_id = got[0] if isinstance(got, (list, tuple)) and got else got
+                if k in sim and got_id != v:
+                    problems.append("Odoo would change %s from %s to %r." % (k, v, got))
+        would_fill = {k: v for k, v in sim.items() if k not in vals}
+        return would_fill, problems
 
     def create_repair_order(self, vals, dry_run=True):
         clean, warnings = self.validate_repair_vals(vals)
-        missing = self.missing_required(clean)
-        if missing and not dry_run:
-            raise GuardError("Required field(s) without value or Odoo default: %s." % ", ".join(missing))
-        if missing:
-            warnings.append("Odoo would reject this: required field(s) without value or default: %s."
-                            % ", ".join(missing))
+        would_fill, problems = self.check_against_odoo(clean)
+        if problems and not dry_run:
+            raise GuardError("Not created: " + " ".join(problems))
+        warnings += ["Odoo would reject or alter this: " + p for p in problems]
         if dry_run:
-            return {"dry_run": True, "payload": clean, "warnings": warnings}
+            return {"dry_run": True, "payload": clean, "warnings": warnings, "odoo_would_fill": would_fill}
         new_id = self.execute("repair.order", "create", [clean])
         if isinstance(new_id, list):
             new_id = new_id[0]
@@ -421,7 +470,8 @@ class OdooClient:
             name = self.execute("repair.order", "read", [[new_id]], {"fields": ["name"]})[0]["name"]
         except Exception:
             pass
-        return {"dry_run": False, "payload": clean, "warnings": warnings, "id": new_id, "name": name}
+        return {"dry_run": False, "payload": clean, "warnings": warnings, "odoo_would_fill": would_fill,
+                "id": new_id, "name": name}
 
 
 # ---------------------------------------------------------------------------
@@ -455,11 +505,13 @@ def lookup(index, odoo, raw_ai, lot_ai_fields=("ref", "barcode")):
     def add(lot, reason):
         found_by.setdefault(lot["id"], (lot, []))[1].append(reason)
 
+    ref_needles = ["%05d" % ai, "AI%d" % ai, "AI %d" % ai]
     for f in ai_fields:
-        cands = odoo.search_read("stock.lot", [(f, "ilike", str(ai))], read_fields, limit=50)
+        domain = ["|"] * len(ref_needles) + [(f, "=", str(ai))] + [(f, "ilike", n) for n in ref_needles]
+        cands = odoo.search_read("stock.lot", domain, read_fields, limit=200)
         hits = [l for l in cands if ai_in_ref(ai, l.get(f))]
-        result["steps"].append("stock.lot.%s ilike %r -> %d candidates, %d with AI %d" % (
-            f, str(ai), len(cands), len(hits), ai))
+        result["steps"].append("stock.lot.%s = %r or ilike any of %s -> %d candidates, %d with AI %d" % (
+            f, str(ai), ref_needles, len(cands), len(hits), ai))
         for lot in hits:
             add(lot, "AI on lot (%s: %s)" % (f, lot.get(f)))
     if not ai_fields:
@@ -538,6 +590,9 @@ def lookup(index, odoo, raw_ai, lot_ai_fields=("ref", "barcode")):
         if len(lot_pieces(lot["name"])) > 1:
             entry["note"] = "This lot holds several serials (kit or grouped units)."
         result["lots"].append(entry)
+    # within the same match quality, lots that already had repairs come first
+    rank_of = {lot["id"]: rank((lot, reasons[lot["id"]]))[:2] for lot in lots}
+    result["lots"].sort(key=lambda e: (rank_of[e["lot"]["id"]], -len(e["repairs"]), e["lot"]["id"]))
     if len(lots) > 1:
         result["warnings"].append("%d lots match; pick the right one." % len(lots))
     return result

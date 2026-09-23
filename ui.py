@@ -259,7 +259,10 @@ async function submit(preview) {
     msgs(out, r.warnings || [], "warn");
     if (r.dry_run) msgs(out, ["Dry-run: nothing was created. This is exactly what would be sent to repair.order.create:"], "ok");
     else msgs(out, [`Created ${r.name || ("repair.order id " + r.id)} in Odoo.`], "ok");
-    $("payload").textContent = JSON.stringify(r.payload, null, 2); $("payload").classList.remove("hidden");
+    let shown = JSON.stringify(r.payload, null, 2);
+    if (r.odoo_would_fill && Object.keys(r.odoo_would_fill).length)
+      shown += "\n\n// Odoo fills in by itself (simulated, nothing saved):\n" + JSON.stringify(r.odoo_would_fill, null, 2);
+    $("payload").textContent = shown; $("payload").classList.remove("hidden");
   } catch (e) { msgs(out, [e.message], "bad"); }
   finally { setTimeout(() => { $("createBtn").disabled = $("previewBtn").disabled = false; }, LIVE && !preview ? 3000 : 0); }
 }

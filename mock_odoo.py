@@ -29,7 +29,10 @@ FIELDS = {
         "location_id": F("Location", "many2one", "stock.location", required=True),
         "partner_id": F("Customer", "many2one", "res.partner"),
         "product_id": F("Product to Repair", "many2one", "product.product"),
-        "lot_id": F("Lot/Serial", "many2one", "stock.lot"),
+        "lot_id": F("Lot/Serial", "many2one", "stock.lot", readonly=True),  # computed+stored in Odoo 17
+        "location_dest_id": F("Destination Location", "many2one", "stock.location", required=True),
+        "parts_location_id": F("Parts Location", "many2one", "stock.location", required=True),
+        "recycle_location_id": F("Recycle Location", "many2one", "stock.location", required=True),
         "product_qty": F("Product Quantity", "float"),
         "product_uom": F("Product Unit of Measure", "many2one", "uom.uom"),
         "schedule_date": F("Scheduled Date", "datetime", required=True),
@@ -145,6 +148,10 @@ def _leaf(rec, leaf, db):
         return v in value
     if op == "not in":
         return v not in value
+    if op in (">=", "<=", ">", "<"):
+        if v in (None, False):
+            return False
+        return {">=": v >= value, "<=": v <= value, ">": v > value, "<": v < value}[op]
     if op == "ilike":
         return v not in (None, False) and str(value).lower() in str(v).lower()
     raise ValueError("unsupported operator %s" % op)
@@ -186,6 +193,8 @@ class MockOdoo:
             raise ValueError("Object %s doesn't exist" % model)
         if method == "fields_get":
             return FIELDS[model]
+        if method == "onchange":
+            return self.onchange(model, args[1], args[3])
         if method == "default_get":
             defaults = DEFAULTS.get(model, {})
             return {f: defaults[f] for f in args[0] if f in defaults}
@@ -232,6 +241,28 @@ class MockOdoo:
                 self.db[model].append(rec)
                 return new_id
         raise ValueError("mock: method %s not supported" % method)
+
+    def onchange(self, model, values, spec):
+        """Odoo 17 first-call onchange: defaults + values + computes, nothing saved."""
+        rec = dict(DEFAULTS.get(model, {}))
+        rec.update(values)
+        if model == "repair.order":
+            if rec.get("picking_type_id"):  # locations computed from the operation type
+                for f in ("location_id", "location_dest_id", "parts_location_id", "recycle_location_id"):
+                    rec.setdefault(f, 8)
+            lot = next((l for l in self.db["stock.lot"] if l["id"] == rec.get("lot_id")), None)
+            if lot and lot["product_id"][0] != rec.get("product_id"):
+                rec["lot_id"] = False  # Odoo clears a lot that belongs to another product
+        out = {}
+        for f in spec:
+            v = rec.get(f, False)
+            meta = FIELDS[model].get(f, {})
+            if meta.get("type") == "many2one" and v:
+                rel = self.db.get(meta["relation"], [])
+                r = next((x for x in rel if x["id"] == v), {})
+                v = {"id": v, "display_name": r.get("display_name") or r.get("name") or str(v)}
+            out[f] = v
+        return {"value": out}
 
     def handle(self, payload):
         p = payload["params"]

@@ -169,6 +169,22 @@ class TestGuard(Base):
         with self.assertRaises(core.GuardError):
             odoo.execute("repair.order", "unlink", [[1]])
 
+    def test_lot_sent_and_simulated(self):
+        res = self.make_app().odoo.create_repair_order(self.vals(schedule_date="2026-09-23 12:00:00"), dry_run=True)
+        self.assertEqual(res["payload"]["lot_id"], 100)
+        self.assertFalse(res["warnings"], res["warnings"])
+        self.assertEqual(res["odoo_would_fill"]["location_id"][0], 8)
+
+    def test_lot_of_other_product_refused(self):
+        odoo = self.make_app().odoo
+        vals = self.vals(lot_id=101, schedule_date="2026-09-23 12:00:00")  # lot 101 is an H5K5, product 5 is CP4
+        res = odoo.create_repair_order(vals, dry_run=True)
+        self.assertTrue(any("lot_id" in w for w in res["warnings"]))
+        before = len(self.mock.creates)
+        with self.assertRaises(core.GuardError):
+            odoo.create_repair_order(vals, dry_run=False)
+        self.assertEqual(len(self.mock.creates), before)
+
     def test_readonly_dropped(self):
         res = self.make_app().odoo.create_repair_order(self.vals(state="done"), dry_run=True)
         self.assertNotIn("state", res["payload"])
@@ -235,6 +251,7 @@ class TestHTTP(Base):
         self.assertEqual(p["tag_ids"], [[6, 0, [2]]])
         self.assertRegex(p["schedule_date"], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
         self.assertIn("ALFA AI 1948", p["internal_notes"])
+        self.assertEqual(p["lot_id"], 100)
         self.assertEqual(len(self.mock.creates), before)
 
     def test_partner_must_be_int(self):
