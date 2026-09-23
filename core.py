@@ -127,19 +127,25 @@ def search_needles(serial):
     return needles
 
 
-def ref_ais(ref):
-    """AI numbers named in a lot reference: 'AI01948', 's/n: AI01631', 'AI00115 , AI00116', '1948'."""
+def ref_ais(ref, allow_plain=True):
+    """AI numbers named in a lot reference: 'AI01948', 's/n: AI01631', 'AI00115 , AI00116', '1948'.
+    allow_plain=False for lot names, where a bare number is a serial, not an AI."""
     ref = (ref or "").strip()
     if not ref:
         return []
     numbers = [int(n) for n in re.findall(r"(?i)AI\s*[-#:]?\s*(\d{1,7})\b", ref)]
-    if re.fullmatch(r"0*\d{1,5}", ref):
+    if allow_plain and re.fullmatch(r"0*\d{1,5}", ref):
         numbers.append(int(ref))
     return numbers
 
 
-def ai_in_ref(ai, ref):
-    return ai in ref_ais(ref)
+def ai_in_ref(ai, ref, allow_plain=True):
+    return ai in ref_ais(ref, allow_plain)
+
+
+def lot_ais(lot):
+    """AIs a lot names in its ref or (as 'AI01948') in its name."""
+    return sorted(set(ref_ais(lot.get("ref"))) | set(ref_ais(lot.get("name"), allow_plain=False)))
 
 
 def longest_digit_run(serial, minimum=6):
@@ -181,6 +187,10 @@ class EquipmentIndex:
             vals = sheet.row_values(r)
             vals += [""] * (7 - len(vals))
             ai = parse_ai(cell_to_text(vals[0]))
+            annulled = bool(re.search(r"(?i)anulad", str(vals[0])))
+            if ai is None and annulled:  # e.g. '  ANULADO    1811'
+                nums = re.findall(r"\d+", str(vals[0]))
+                ai = int(nums[-1]) if nums else None
             date = vals[2]
             if isinstance(date, float) and date > 0:
                 try:
@@ -193,6 +203,7 @@ class EquipmentIndex:
                 "ai": ai,
                 "ai_raw": vals[0] if isinstance(vals[0], str) else cell_to_text(vals[0]) if vals[0] != "" else "",
                 "ai_raw_type": type(vals[0]).__name__,
+                "annulled": annulled,
                 "row": r + 1,
                 "status": cell_to_text(vals[1]),
                 "date": date,
@@ -221,6 +232,9 @@ class EquipmentIndex:
         if len(rows) > 1:
             warnings.append("AI %d appears in %d spreadsheet rows (%s)." % (
                 ai, len(rows), ", ".join(str(r["row"]) for r in rows)))
+        for r in rows:
+            if r.get("annulled"):
+                warnings.append("Spreadsheet row %s marks AI %d as ANULADO: %r." % (r["row"], ai, r["ai_raw"]))
         serials = []
         for r in rows:
             if is_junk_serial(r["serial"]):
@@ -506,12 +520,15 @@ def lookup(index, odoo, raw_ai, lot_ai_fields=("ref", "barcode")):
         found_by.setdefault(lot["id"], (lot, []))[1].append(reason)
 
     ref_needles = ["%05d" % ai, "AI%d" % ai, "AI %d" % ai]
-    for f in ai_fields:
-        domain = ["|"] * len(ref_needles) + [(f, "=", str(ai))] + [(f, "ilike", n) for n in ref_needles]
+    for f in ai_fields + ["name"]:
+        plain = f != "name"  # a bare number in a lot name is a serial, not an AI
+        needles = ref_needles
+        domain = (["|"] * len(needles) + [(f, "=", str(ai))] if plain else ["|"] * (len(needles) - 1)) + [
+            (f, "ilike", n) for n in needles]
         cands = odoo.search_read("stock.lot", domain, read_fields, limit=200)
-        hits = [l for l in cands if ai_in_ref(ai, l.get(f))]
+        hits = [l for l in cands if ai_in_ref(ai, l.get(f), plain)]
         result["steps"].append("stock.lot.%s = %r or ilike any of %s -> %d candidates, %d with AI %d" % (
-            f, str(ai), ref_needles, len(cands), len(hits), ai))
+            f, str(ai), needles, len(cands), len(hits), ai))
         for lot in hits:
             add(lot, "AI on lot (%s: %s)" % (f, lot.get(f)))
     if not ai_fields:
@@ -551,6 +568,12 @@ def lookup(index, odoo, raw_ai, lot_ai_fields=("ref", "barcode")):
             result["warnings"].append("The lot tagged with AI %d (%s) is not the lot matching the spreadsheet "
                                       "serial (%s). Check which one is right." % (
                                           ai, by_ai[0]["name"], by_serial[0]["name"]))
+        for lot, r in ranked:
+            others = [a for a in lot_ais(lot) if a != ai]
+            if others and ai not in lot_ais(lot):
+                result["warnings"].append(
+                    "Lot %r matches the spreadsheet serial but Odoo tags it with AI %s, not AI %d: "
+                    "one of them has a typo." % (lot["name"], ", ".join(map(str, others)), ai))
         if all(all(x.startswith("possible") for x in r) for _, r in ranked):
             result["warnings"].append("Only partial serial matches: verify the lot really is this unit.")
 

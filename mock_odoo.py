@@ -98,6 +98,8 @@ def seed():
         {"id": 106, "name": "104 15 005048   06.21", "ref": "AI00001", "product_id": [7, products[2]["display_name"]]},
         {"id": 107, "name": "009 03 000922 05.05  , 009 03 000938 05.05", "ref": "AI00115 , AI00116",
          "product_id": [7, products[2]["display_name"]]},
+        {"id": 109, "name": "AI00448", "ref": False, "product_id": [7, products[2]["display_name"]]},
+        {"id": 110, "name": "104 15 005099 06.21", "ref": "s/n: AI01631", "product_id": [7, products[2]["display_name"]]},
         {"id": 108, "name": "03002000529 , 03102000334", "ref": False, "product_id": [7, products[2]["display_name"]]},
     ]
     for l in lots:

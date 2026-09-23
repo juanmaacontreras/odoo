@@ -24,6 +24,9 @@ ROWS = [
     {"ai": 1, "row": 11, "status": "", "date": "", "model": "SecorRphon", "serial": "104 15 005048  06.21", "version": "", "customer": "z"},
     {"ai": 116, "row": 12, "status": "", "date": "", "model": "Secorr", "serial": "00903000938 05.05", "version": "", "customer": "z"},
     {"ai": 148, "row": 13, "status": "", "date": "", "model": "Secorr", "serial": "030 02 000334 09.09", "version": "", "customer": "z"},
+    {"ai": 448, "row": 14, "status": "", "date": "", "model": "Ferrotec", "serial": "----", "version": "", "customer": "z"},
+    {"ai": 2, "row": 1631, "status": "", "date": "", "model": "SeCorrPhon", "serial": "104 15 005099 06.21", "version": "", "customer": "z"},
+    {"ai": 1811, "row": 1811, "annulled": True, "ai_raw": "  ANULADO   1811", "status": "", "date": "", "model": "H5K5", "serial": "63231811", "version": "", "customer": "z"},
     {"ai": 800, "row": 10, "status": "", "date": "", "model": "?", "serial": "99.887.766", "version": "", "customer": "z"},
 ]
 
@@ -119,6 +122,15 @@ class TestLookup(Base):
         r = core.lookup(app.index, app.odoo, "148")  # only a different serial sharing digits
         self.assertTrue(r["lots"][0]["match"][0].startswith("possible"))
         self.assertTrue(any("partial" in w for w in r["warnings"]))
+
+    def test_ai_in_lot_name_and_typos(self):
+        app = self.make_app()
+        r = core.lookup(app.index, app.odoo, "448")  # lot named 'AI00448'
+        self.assertEqual(r["lots"][0]["lot"]["id"], 109)
+        r = core.lookup(app.index, app.odoo, "2")  # sheet says AI 2, lot ref says AI01631
+        self.assertTrue(any("AI 1631, not AI 2" in w for w in r["warnings"]), r["warnings"])
+        self.assertTrue(any("ANULADO" in w for w in app.index.lookup(1811)["warnings"]))
+        self.assertEqual(core.ref_ais("12345", allow_plain=False), [])
 
     def test_serial_match(self):
         self.assertEqual(core.serial_match("034 02 002361  12.09", "034 02 002361"), "exact")

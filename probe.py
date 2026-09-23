@@ -44,7 +44,7 @@ def survey(app):
     examples = {k: [] for k in counts}
     for ai, rows in sorted(app.index.by_ai.items()):
         serial = next((r["serial"] for r in rows if not core.is_junk_serial(r["serial"])), None)
-        by_ref = [l for l in lots if core.ai_in_ref(ai, l.get("ref"))]
+        by_ref = [l for l in lots if ai in core.lot_ais(l)]
         best, best_lot = None, None
         if serial:
             for l in lots:
@@ -127,7 +127,7 @@ def recent_survey(app, since):
         if not lot:
             kind = "no lot"
         else:
-            ref_list = [a for a in core.ref_ais(lot.get("ref")) if a in idx.by_ai]
+            ref_list = [a for a in core.lot_ais(lot) if a in idx.by_ai]
             serial_ais = set()
             for piece in core.lot_pieces(lot["name"]):
                 serial_ais |= by_core.get(core.serial_core(piece), set())
@@ -137,7 +137,7 @@ def recent_survey(app, since):
                 kind = "AI on lot ref"
             elif serial_ais:
                 kind = "lot serial found in spreadsheet"
-            elif core.ref_ais(lot.get("ref")):
+            elif core.lot_ais(lot):
                 kind = "lot ref names an AI missing from spreadsheet"
             else:
                 kind = "lot not linked to any AI"
