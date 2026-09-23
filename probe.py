@@ -2,11 +2,14 @@
 
   python probe.py                 -> login + field report for repair.order / stock.lot
   python probe.py 1948 1953 609   -> also dry-run lookups for those AI numbers
+  python probe.py --survey        -> how many spreadsheet serials exist as lots in Odoo,
+                                     and how recent repair orders were filled in
 
 Uses config.json (or the file given with --config PATH). The API key is never printed.
 """
 
 import json
+import re
 import sys
 
 import core
@@ -20,12 +23,70 @@ KEY_FIELDS = {
 }
 
 
+def strip_html(text):
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text or "")).strip()
+
+
+def survey(app):
+    odoo = app.odoo
+    n_lots = odoo.execute("stock.lot", "search_count", [[]])
+    n_rep = odoo.execute("repair.order", "search_count", [[]])
+    n_rep_lot = odoo.execute("repair.order", "search_count", [[("lot_id", "!=", False)]])
+    print("\n== Survey (read-only) ==")
+    print("stock.lot records: %d" % n_lots)
+    print("repair.order records: %d, with lot: %d, without lot: %d" % (n_rep, n_rep_lot, n_rep - n_rep_lot))
+
+    lots = odoo.search_read("stock.lot", [], ["name", "ref", "product_id"])
+    by_key, by_digits = {}, {}
+    for lot in lots:
+        by_key.setdefault(core.serial_key(lot["name"]), []).append(lot)
+        by_digits.setdefault(re.sub(r"\D", "", lot["name"] or ""), []).append(lot)
+    exact, partial, none, examples = 0, 0, 0, []
+    for ai, rows in sorted(app.index.by_ai.items()):
+        serial = next((r["serial"] for r in rows if not core.is_junk_serial(r["serial"])), None)
+        if not serial:
+            continue
+        hit = by_key.get(core.serial_key(serial))
+        if hit:
+            exact += 1
+        else:
+            run = core.longest_digit_run(serial)
+            hit = [l for d, ls in by_digits.items() if run and run in d for l in ls] if run else []
+            if hit:
+                partial += 1
+            else:
+                none += 1
+        if hit and len(examples) < 15:
+            examples.append((ai, serial, hit[0]["name"], hit[0]["product_id"][1] if hit[0]["product_id"] else ""))
+    total = exact + partial + none
+    print("spreadsheet AIs with a usable serial: %d -> lot found exact: %d, partial: %d, not in Odoo: %d"
+          % (total, exact, partial, none))
+    for ai, serial, name, prod in examples:
+        print("  AI %-5s serial %-22r -> lot %-20r %s" % (ai, serial, name, prod))
+    refs = [l for l in lots if l.get("ref")]
+    print("lots with 'Internal Reference' (ref) set: %d%s" % (
+        len(refs), "  e.g. " + ", ".join(repr(l["ref"]) for l in refs[:8]) if refs else ""))
+
+    print("\n15 most recent repair orders:")
+    reps = odoo.search_read("repair.order", [], ["name", "create_date", "product_id", "lot_id", "partner_id",
+                                                 "internal_notes", "state"], limit=15, order="id desc")
+    for r in reps:
+        print("  %-10s %s  %-9s product=%r lot=%r customer=%r notes=%r" % (
+            r["name"], (r.get("create_date") or "")[:10], r.get("state"),
+            r["product_id"][1] if r.get("product_id") else None,
+            r["lot_id"][1] if r.get("lot_id") else None,
+            r["partner_id"][1] if r.get("partner_id") else None,
+            strip_html(r.get("internal_notes"))[:80]))
+
+
 def main(argv):
     cfg_path = server.DEFAULT_CONFIG
     if "--config" in argv:
         i = argv.index("--config")
         cfg_path = argv[i + 1]
         argv = argv[:i] + argv[i + 2:]
+    do_survey = "--survey" in argv
+    argv = [a for a in argv if a != "--survey"]
     cfg = server.load_config(cfg_path)
     print("Odoo: %s  db: %s  user: %s  api key: %s  mode: %s" % (
         cfg["odoo_url"], cfg["database"], cfg["username"] or "(missing)",
@@ -47,6 +108,9 @@ def main(argv):
         req = sorted(k for k, v in meta.items() if v.get("required"))
         print("  required fields:", ", ".join(req))
     print("\nField map used for repair.order:", json.dumps(app.odoo.repair_field_map(), indent=2))
+
+    if do_survey:
+        survey(app)
 
     for raw in argv:
         print("\n" + "=" * 70 + "\nAI %s" % raw)

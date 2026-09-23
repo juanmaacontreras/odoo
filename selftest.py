@@ -151,6 +151,15 @@ class TestGuard(Base):
         self.assertNotIn("state", res["payload"])
         self.assertTrue(res["warnings"])
 
+    def test_missing_required(self):
+        odoo = self.make_app().odoo
+        res = odoo.create_repair_order(self.vals(), dry_run=True)  # no schedule_date
+        self.assertTrue(any("schedule_date" in w for w in res["warnings"]))
+        before = len(self.mock.creates)
+        with self.assertRaises(core.GuardError):
+            odoo.create_repair_order(self.vals(), dry_run=False)
+        self.assertEqual(len(self.mock.creates), before)
+
     def test_dry_run_creates_nothing(self):
         before = len(self.mock.creates)
         res = self.make_app().odoo.create_repair_order(self.vals(tag_ids=[[6, 0, [1]]]), dry_run=True)
@@ -220,6 +229,8 @@ class TestHTTP(Base):
                                    token=app.token)[0], 400)  # wrong AI typed
         code, r = self.call(base, "/api/create", dict(body, preview=True), token=app.token)
         self.assertTrue(r["dry_run"])
+        self.assertIn("schedule_date", r["payload"])  # required -> defaulted to now
+        self.assertFalse(r["warnings"])
         code, r = self.call(base, "/api/create", dict(body, confirm=True, confirm_ai="AI1948"), token=app.token)
         self.assertEqual(code, 200, r)
         self.assertFalse(r["dry_run"])

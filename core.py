@@ -248,7 +248,7 @@ class OdooClient:
                                                             "name_create", "load"):
             raise GuardError("Refusing %s on %s: this tool never modifies %s." % (method, model, model))
         if method not in ("fields_get", "search_read", "search", "search_count", "read",
-                          "check_access_rights") and not (model == "repair.order" and method == "create"):
+                          "check_access_rights", "default_get") and not (model == "repair.order" and method == "create"):
             raise GuardError("Method %s.%s is not allowed by this tool." % (model, method))
         return self._rpc("object", "execute_kw",
                          [self.db, self.uid, self._key, model, method, args or [], kwargs or {}])
@@ -329,8 +329,23 @@ class OdooClient:
                 raise GuardError("%s: id(s) %s not found (or archived) in %s." % (name, ids, relation))
         return clean, warnings
 
+    def missing_required(self, vals):
+        """Required repair.order fields that are neither in vals nor defaulted by Odoo."""
+        meta = self.fields("repair.order")
+        absent = sorted(k for k, v in meta.items() if v.get("required") and k not in vals)
+        if not absent:
+            return []
+        defaults = self.execute("repair.order", "default_get", [absent])
+        return [k for k in absent if defaults.get(k) in (None, False, "", [])]
+
     def create_repair_order(self, vals, dry_run=True):
         clean, warnings = self.validate_repair_vals(vals)
+        missing = self.missing_required(clean)
+        if missing and not dry_run:
+            raise GuardError("Required field(s) without value or Odoo default: %s." % ", ".join(missing))
+        if missing:
+            warnings.append("Odoo would reject this: required field(s) without value or default: %s."
+                            % ", ".join(missing))
         if dry_run:
             return {"dry_run": True, "payload": clean, "warnings": warnings}
         new_id = self.execute("repair.order", "create", [clean])
@@ -490,6 +505,8 @@ def build_repair_vals(odoo, form, notes_prefix=""):
         put("uom", form["uom_id"])
     if form.get("tag_ids"):
         put("tags", [[6, 0, list(form["tag_ids"])]])
+    if not form.get("schedule_date") and fmap.get("schedule_date") and meta[fmap["schedule_date"]].get("required"):
+        form = dict(form, schedule_date=datetime.now().strftime("%Y-%m-%dT%H:%M"))
     if form.get("schedule_date") and fmap.get("schedule_date"):
         if meta[fmap["schedule_date"]]["type"] == "date":
             put("schedule_date", form["schedule_date"][:10])

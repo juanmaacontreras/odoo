@@ -24,15 +24,17 @@ def F(string, type_, relation=None, readonly=False, required=False, selection=No
 FIELDS = {
     "repair.order": {
         "id": F("ID", "integer", readonly=True),
-        "name": F("Repair Reference", "char"),
+        "name": F("Repair Reference", "char", required=True),
+        "picking_type_id": F("Operation Type", "many2one", "stock.picking.type", required=True),
+        "location_id": F("Location", "many2one", "stock.location", required=True),
         "partner_id": F("Customer", "many2one", "res.partner"),
         "product_id": F("Product to Repair", "many2one", "product.product"),
         "lot_id": F("Lot/Serial", "many2one", "stock.lot"),
         "product_qty": F("Product Quantity", "float"),
         "product_uom": F("Product Unit of Measure", "many2one", "uom.uom"),
-        "schedule_date": F("Scheduled Date", "datetime"),
+        "schedule_date": F("Scheduled Date", "datetime", required=True),
         "user_id": F("Responsible", "many2one", "res.users"),
-        "company_id": F("Company", "many2one", "res.company"),
+        "company_id": F("Company", "many2one", "res.company", required=True),
         "tag_ids": F("Tags", "many2many", "repair.tags"),
         "under_warranty": F("Under Warranty", "boolean"),
         "internal_notes": F("Internal Notes", "html"),
@@ -62,6 +64,9 @@ FIELDS = {
     "uom.uom": {"id": F("ID", "integer"), "name": F("Name", "char")},
     "res.company": {"id": F("ID", "integer"), "name": F("Name", "char")},
 }
+
+# what Odoo would default on repair.order (schedule_date has no default on purpose)
+DEFAULTS = {"repair.order": {"name": "New", "company_id": 1, "picking_type_id": 1, "location_id": 8}}
 
 
 def seed():
@@ -177,6 +182,9 @@ class MockOdoo:
             raise ValueError("Object %s doesn't exist" % model)
         if method == "fields_get":
             return FIELDS[model]
+        if method == "default_get":
+            defaults = DEFAULTS.get(model, {})
+            return {f: defaults[f] for f in args[0] if f in defaults}
         if method in ("search_read", "search", "search_count"):
             recs = self.records(model, args[0] if args else [])
             if kw.get("order", "").startswith("create_date desc"):
