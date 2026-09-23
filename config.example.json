@@ -1,0 +1,14 @@
+{
+  "odoo_url": "http://45.79.204.23:8069",
+  "database": "alfa-v1",
+  "username": "YOUR_ODOO_LOGIN",
+  "api_key": "PASTE_API_KEY_HERE",
+  "spreadsheet": "equipos.xls",
+  "live_mode": false,
+  "host": "127.0.0.1",
+  "port": 8765,
+  "lot_ai_fields": ["ref", "barcode"],
+  "company_id": null,
+  "default_tag_ids": [],
+  "timeout_seconds": 20
+}

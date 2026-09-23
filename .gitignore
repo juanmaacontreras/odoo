@@ -1,0 +1,7 @@
+# secrets and local data - never commit
+config.json
+intake_log.jsonl
+*.xls
+*.xlsx
+__pycache__/
+*.pyc
