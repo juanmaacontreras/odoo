@@ -174,9 +174,10 @@ function renderSheet(r) {
 function renderLots(r) {
   $("lotsCard").classList.remove("hidden");
   let h = r.lots.length
-    ? `<div class="src">Matched by: ${esc(r.match)}${r.lots.length > 1 ? " — click the right one" : ""}</div>
-       <table><tr><th>Lot / serial</th><th>Product</th><th>Customer (Odoo)</th><th>Repairs</th></tr>` +
-       r.lots.map((e, i) => `<tr class="pick" id="lot${i}" onclick="pickLot(${i})"><td><b>${esc(e.lot.name)}</b>${e.lot.ref ? `<div class="src">ref ${esc(e.lot.ref)}</div>` : ""}</td>
+    ? `<div class="src">${r.lots.length > 1 ? "Several lots match — click the right one." : "One lot matches."}</div>
+       <table><tr><th>Lot / serial</th><th>Why it matched</th><th>Product</th><th>Customer (Odoo)</th><th>Repairs</th></tr>` +
+       r.lots.map((e, i) => `<tr class="pick" id="lot${i}" onclick="pickLot(${i})"><td><b>${esc(e.lot.name)}</b>${e.lot.ref ? `<div class="src">ref ${esc(e.lot.ref)}</div>` : ""}${e.note ? `<div class="src">${esc(e.note)}</div>` : ""}</td>
+         <td class="src">${e.match.map(m => m.startsWith("possible") ? `<span class="msg warn" style="padding:1px 5px">${esc(m)}</span>` : esc(m)).join("<br>")}</td>
          <td>${esc(e.product ? e.product.display_name : m2o(e.lot.product_id))}</td>
          <td>${e.customer ? esc(e.customer.name) + `<div class="src">${esc(e.customer_source)}</div>` : '<span class="src">unknown</span>'}</td>
          <td>${e.repairs.length}${e.open_repairs.length ? ` <span class="msg warn" style="padding:1px 5px">open: ${esc(e.open_repairs.join(", "))}</span>` : ""}</td></tr>`).join("") + `</table>`
@@ -193,7 +194,7 @@ function pickLot(i) {
   $("fProductSrc").textContent = "from Odoo (product of the lot)";
   $("fLot").textContent = e.lot.name;
   const sheetSerial = state.lookup.sheet.serial;
-  $("fLotSrc").textContent = "from Odoo · " + (sheetSerial ? `spreadsheet says ${sheetSerial}` : "no serial in spreadsheet");
+  $("fLotSrc").textContent = "from Odoo (" + e.match.join("; ") + ") · " + (sheetSerial ? `spreadsheet says ${sheetSerial}` : "no serial in spreadsheet");
   setPartner(e.customer ? { id: e.customer.id, name: e.customer.name } : null, e.customer_source || "not found in Odoo — search below");
   const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   if (!$("fDate").value) $("fDate").value = d.toISOString().slice(0, 16);

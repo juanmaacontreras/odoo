@@ -73,6 +73,71 @@ def serial_variants(serial):
     return out
 
 
+SERIAL_DATE_RE = re.compile(r"\s+\d{2}\.\d{2}\s*$")  # Sewerin 'MM.YY' suffix: '104 15 005048 06.21'
+
+
+def strip_serial_date(serial):
+    return SERIAL_DATE_RE.sub("", (serial or "").strip())
+
+
+def serial_core(serial):
+    return serial_key(strip_serial_date(serial))
+
+
+def lot_pieces(lot_name):
+    """A lot name may list several serials: '009 03 000922 05.05 , 009 03 000938 05.05'."""
+    return [p.strip() for p in re.split(r"[,;]| / ", lot_name or "") if p.strip()]
+
+
+SERIAL_MATCH_LABELS = {
+    "exact": "same serial as spreadsheet (%s)",
+    "listed": "spreadsheet serial %s listed in this lot",
+    "partial": "possible: shares digits with spreadsheet serial %s",
+}
+
+
+def serial_match(sheet_serial, lot_name):
+    """'exact' | 'listed' | 'partial' | None, ignoring spacing, punctuation and the MM.YY suffix."""
+    want = serial_core(sheet_serial)
+    if not want:
+        return None
+    pieces = lot_pieces(lot_name)
+    cores = [serial_core(p) for p in pieces]
+    if len(pieces) == 1 and (cores[0] == want or serial_key(pieces[0]) == serial_key(sheet_serial)):
+        return "exact"
+    if want in cores:
+        return "listed"
+    run = longest_digit_run(strip_serial_date(sheet_serial))
+    if run and any(run in group for p in pieces for group in re.findall(r"\d+", p)):
+        return "partial"
+    return None
+
+
+def search_needles(serial):
+    """ilike needles that survive spacing differences: the longest digit run, plus the last
+    6 digits (the unit number in Sewerin 'NNN NN NNNNNN' serials)."""
+    base = strip_serial_date(serial)
+    needles = []
+    run = longest_digit_run(base)
+    if run:
+        needles.append(run)
+    digits = re.sub(r"\D", "", base)
+    if len(digits) >= 9 and digits[-6:] not in needles:
+        needles.append(digits[-6:])
+    return needles
+
+
+def ai_in_ref(ai, ref):
+    """True if a lot reference like 'AI01948', 'AI 1948' or 'AI00115 , AI01948' names this AI."""
+    ref = (ref or "").strip()
+    if not ref:
+        return False
+    numbers = [int(n) for n in re.findall(r"(?i)\bAI\s*[-#:]?\s*(\d{1,7})\b", ref)]
+    if re.fullmatch(r"0*\d{1,5}", ref):
+        numbers.append(int(ref))
+    return ai in numbers
+
+
 def longest_digit_run(serial, minimum=6):
     runs = re.findall(r"\d+", serial or "")
     if not runs:
@@ -383,40 +448,59 @@ def lookup(index, odoo, raw_ai, lot_ai_fields=("ref", "barcode")):
     read_fields = [f for f in LOT_READ_FIELDS + list(lot_ai_fields) if f in lot_meta]
     lots = []
 
-    # 1. AI stored on the lot itself
+    # 1. AI stored on the lot itself (e.g. ref 'AI01948' or 'AI00115 , AI00116')
     ai_fields = [f for f in lot_ai_fields if f in lot_meta and lot_meta[f].get("type") == "char"]
-    ai_values = sorted({str(ai), str(ai).zfill(4), str(ai).zfill(5), "AI%d" % ai, "AI %d" % ai,
-                        "AI-%d" % ai, "ai%d" % ai})
+    found_by = {}  # lot id -> (lot, [reasons])
+
+    def add(lot, reason):
+        found_by.setdefault(lot["id"], (lot, []))[1].append(reason)
+
     for f in ai_fields:
-        found = odoo.search_read("stock.lot", [(f, "in", ai_values)], read_fields, limit=20)
-        result["steps"].append("stock.lot.%s in %s -> %d" % (f, ai_values, len(found)))
-        if found:
-            lots, result["match"] = found, "AI stored on the lot (%s)" % f
-            break
+        cands = odoo.search_read("stock.lot", [(f, "ilike", str(ai))], read_fields, limit=50)
+        hits = [l for l in cands if ai_in_ref(ai, l.get(f))]
+        result["steps"].append("stock.lot.%s ilike %r -> %d candidates, %d with AI %d" % (
+            f, str(ai), len(cands), len(hits), ai))
+        for lot in hits:
+            add(lot, "AI on lot (%s: %s)" % (f, lot.get(f)))
     if not ai_fields:
         result["steps"].append("stock.lot has no %s field(s); skipped AI-on-lot search" % "/".join(lot_ai_fields))
 
-    # 2. exact serial variants, 3. longest digit run
-    serials = sheet["serials"]
-    if not lots and serials:
-        variants = []
-        for s in serials:
-            variants += [v for v in serial_variants(s) if v not in variants]
-        found = odoo.search_read("stock.lot", [("name", "in", variants)], read_fields, limit=20)
-        result["steps"].append("stock.lot.name in %s -> %d" % (variants, len(found)))
-        if found:
-            lots, result["match"] = found, "exact serial"
-    if not lots and serials:
-        for s in serials:
-            run = longest_digit_run(s)
-            if not run:
-                result["steps"].append("serial %r has no run of 6+ digits; skipped partial search" % s)
-                continue
-            found = odoo.search_read("stock.lot", [("name", "ilike", run)], read_fields, limit=20)
-            result["steps"].append("stock.lot.name ilike %r -> %d" % (run, len(found)))
-            if found:
-                lots, result["match"] = found, "partial serial (contains %s)" % run
-                break
+    # 2. manufacturer serial: exact variants + candidates sharing the longest digit run, then scored
+    for serial in sheet["serials"]:
+        variants = serial_variants(serial)
+        cands = {l["id"]: l for l in odoo.search_read("stock.lot", [("name", "in", variants)], read_fields,
+                                                      limit=20)}
+        needles = search_needles(serial)
+        if needles:
+            domain = ["|"] * (len(needles) - 1) + [("name", "ilike", n) for n in needles]
+            for l in odoo.search_read("stock.lot", domain, read_fields, limit=50):
+                cands.setdefault(l["id"], l)
+        result["steps"].append("serial %r: name in %s or ilike any of %s -> %d candidates" % (
+            serial, variants, needles, len(cands)))
+        for lot in cands.values():
+            quality = serial_match(serial, lot["name"])
+            if quality:
+                add(lot, SERIAL_MATCH_LABELS[quality] % serial)
+
+    def rank(item):
+        lot, reasons = item
+        text = " ".join(reasons)
+        return (0 if text.startswith("AI on lot") else 1,
+                0 if "same serial" in text else 1 if "listed" in text else 2, lot["id"])
+
+    ranked = sorted(found_by.values(), key=rank)
+    lots = [lot for lot, _ in ranked]
+    reasons = {lot["id"]: r for lot, r in ranked}
+    if ranked:
+        result["match"] = "; ".join(ranked[0][1])
+        by_ai = [l for l, r in ranked if any(x.startswith("AI on lot") for x in r)]
+        by_serial = [l for l, r in ranked if any("same serial" in x or "listed" in x for x in r)]
+        if by_ai and by_serial and not set(l["id"] for l in by_ai) & set(l["id"] for l in by_serial):
+            result["warnings"].append("The lot tagged with AI %d (%s) is not the lot matching the spreadsheet "
+                                      "serial (%s). Check which one is right." % (
+                                          ai, by_ai[0]["name"], by_serial[0]["name"]))
+        if all(all(x.startswith("possible") for x in r) for _, r in ranked):
+            result["warnings"].append("Only partial serial matches: verify the lot really is this unit.")
 
     if not lots:
         result["warnings"].append("No lot/serial found in Odoo for AI %d." % ai)
@@ -433,7 +517,8 @@ def lookup(index, odoo, raw_ai, lot_ai_fields=("ref", "barcode")):
     repair_meta = odoo.fields("repair.order")
     fmap = odoo.repair_field_map()
     for lot in lots:
-        entry = {"lot": lot, "product": products.get(lot["product_id"][0]) if lot.get("product_id") else None,
+        entry = {"lot": lot, "match": reasons.get(lot["id"], []),
+                 "product": products.get(lot["product_id"][0]) if lot.get("product_id") else None,
                  "customer": None, "customer_source": None, "repairs": [], "open_repairs": []}
         if fmap["lot"]:
             order = "create_date desc, id desc" if "create_date" in repair_meta else "id desc"
@@ -450,6 +535,8 @@ def lookup(index, odoo, raw_ai, lot_ai_fields=("ref", "barcode")):
                     entry["customer"] = {"id": r["partner_id"][0], "name": r["partner_id"][1]}
                     entry["customer_source"] = "Odoo: most recent repair %s" % r["name"]
                     break
+        if len(lot_pieces(lot["name"])) > 1:
+            entry["note"] = "This lot holds several serials (kit or grouped units)."
         result["lots"].append(entry)
     if len(lots) > 1:
         result["warnings"].append("%d lots match; pick the right one." % len(lots))

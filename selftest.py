@@ -21,6 +21,9 @@ ROWS = [
     {"ai": 447, "row": 7, "status": "", "date": "", "model": "Bomba", "serial": "NO TIENE", "version": "", "customer": "x"},
     {"ai": 1953, "row": 8, "status": "", "date": "", "model": "Aquaphon", "serial": "A6 553311", "version": "", "customer": "y"},
     {"ai": 700, "row": 9, "status": "", "date": "", "model": "Aquaphon", "serial": "0110-2004429 – A6", "version": "", "customer": "z"},
+    {"ai": 1, "row": 11, "status": "", "date": "", "model": "SecorRphon", "serial": "104 15 005048  06.21", "version": "", "customer": "z"},
+    {"ai": 116, "row": 12, "status": "", "date": "", "model": "Secorr", "serial": "00903000938 05.05", "version": "", "customer": "z"},
+    {"ai": 148, "row": 13, "status": "", "date": "", "model": "Secorr", "serial": "030 02 000334 09.09", "version": "", "customer": "z"},
     {"ai": 800, "row": 10, "status": "", "date": "", "model": "?", "serial": "99.887.766", "version": "", "customer": "z"},
 ]
 
@@ -75,7 +78,7 @@ class TestLookup(Base):
     def test_exact_serial_and_customer_from_last_repair(self):
         app = self.make_app()
         r = core.lookup(app.index, app.odoo, "AI01948")
-        self.assertEqual(r["match"], "exact serial")
+        self.assertTrue(r["match"].startswith("same serial"))
         e, = r["lots"]
         self.assertEqual(e["lot"]["id"], 100)
         self.assertEqual(e["product"]["default_code"], "CP4")
@@ -85,7 +88,7 @@ class TestLookup(Base):
     def test_ai_on_lot_ref(self):
         app = self.make_app()
         r = core.lookup(app.index, app.odoo, "1114")
-        self.assertTrue(r["match"].startswith("AI stored on the lot"))
+        self.assertTrue(r["match"].startswith("AI on lot"))
         self.assertEqual(r["lots"][0]["lot"]["id"], 101)
 
     def test_duplicate_serial_and_open_repair(self):
@@ -102,7 +105,27 @@ class TestLookup(Base):
     def test_partial(self):
         app = self.make_app()
         r = core.lookup(app.index, app.odoo, "700")
-        self.assertTrue(r["match"].startswith("exact") or r["match"].startswith("partial"))
+        self.assertTrue(r["match"].startswith("possible"))
+
+    def test_messy_real_world_lots(self):
+        app = self.make_app()
+        r = core.lookup(app.index, app.odoo, "1")  # ref AI00001 + serial with extra spaces and date
+        self.assertEqual(r["lots"][0]["lot"]["id"], 106)
+        self.assertEqual(len(r["lots"][0]["match"]), 2)
+        r = core.lookup(app.index, app.odoo, "116")  # multi-serial lot, AI in a ref list
+        self.assertEqual(r["lots"][0]["lot"]["id"], 107)
+        self.assertIn("note", r["lots"][0])
+        self.assertTrue(any("listed" in m for m in r["lots"][0]["match"]))  # unspaced sheet vs spaced lot
+        r = core.lookup(app.index, app.odoo, "148")  # only a different serial sharing digits
+        self.assertTrue(r["lots"][0]["match"][0].startswith("possible"))
+        self.assertTrue(any("partial" in w for w in r["warnings"]))
+
+    def test_serial_match(self):
+        self.assertEqual(core.serial_match("034 02 002361  12.09", "034 02 002361"), "exact")
+        self.assertEqual(core.serial_match("00903000938 05.05", "009 03 000922 05.05 , 009 03 000938 05.05"), "listed")
+        self.assertIsNone(core.serial_match("096 01 007646", "033120076 - 46725"))
+        self.assertTrue(core.ai_in_ref(1948, "AI01948"))
+        self.assertFalse(core.ai_in_ref(1948, "87219480"))
 
     def test_not_found(self):
         app = self.make_app()

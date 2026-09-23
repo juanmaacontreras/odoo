@@ -92,6 +92,10 @@ def seed():
         {"id": 103, "name": "SN-01102004429-B", "ref": False, "product_id": [7, products[2]["display_name"]]},
         {"id": 104, "name": "A6 553311", "ref": False, "product_id": [7, products[2]["display_name"]]},
         {"id": 105, "name": "A6553311", "ref": False, "product_id": [7, products[2]["display_name"]]},
+        {"id": 106, "name": "104 15 005048   06.21", "ref": "AI00001", "product_id": [7, products[2]["display_name"]]},
+        {"id": 107, "name": "009 03 000922 05.05  , 009 03 000938 05.05", "ref": "AI00115 , AI00116",
+         "product_id": [7, products[2]["display_name"]]},
+        {"id": 108, "name": "03002000529 , 03102000334", "ref": False, "product_id": [7, products[2]["display_name"]]},
     ]
     for l in lots:
         l["company_id"] = [1, "Alfa Instrumentos SRL"]

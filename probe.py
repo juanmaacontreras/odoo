@@ -37,32 +37,36 @@ def survey(app):
     print("repair.order records: %d, with lot: %d, without lot: %d" % (n_rep, n_rep_lot, n_rep - n_rep_lot))
 
     lots = odoo.search_read("stock.lot", [], ["name", "ref", "product_id"])
-    by_key, by_digits = {}, {}
-    for lot in lots:
-        by_key.setdefault(core.serial_key(lot["name"]), []).append(lot)
-        by_digits.setdefault(re.sub(r"\D", "", lot["name"] or ""), []).append(lot)
-    exact, partial, none, examples = 0, 0, 0, []
+    counts = {"ai_on_lot": 0, "exact": 0, "listed": 0, "partial": 0, "none": 0}
+    examples = {k: [] for k in counts}
     for ai, rows in sorted(app.index.by_ai.items()):
         serial = next((r["serial"] for r in rows if not core.is_junk_serial(r["serial"])), None)
-        if not serial:
-            continue
-        hit = by_key.get(core.serial_key(serial))
-        if hit:
-            exact += 1
+        by_ref = [l for l in lots if core.ai_in_ref(ai, l.get("ref"))]
+        best, best_lot = None, None
+        if serial:
+            for l in lots:
+                q = core.serial_match(serial, l["name"])
+                if q and (best is None or ["exact", "listed", "partial"].index(q) < ["exact", "listed", "partial"].index(best)):
+                    best, best_lot = q, l
+        if by_ref:
+            key, lot = "ai_on_lot", by_ref[0]
+        elif best:
+            key, lot = best, best_lot
+        elif serial:
+            key, lot = "none", None
         else:
-            run = core.longest_digit_run(serial)
-            hit = [l for d, ls in by_digits.items() if run and run in d for l in ls] if run else []
-            if hit:
-                partial += 1
-            else:
-                none += 1
-        if hit and len(examples) < 15:
-            examples.append((ai, serial, hit[0]["name"], hit[0]["product_id"][1] if hit[0]["product_id"] else ""))
-    total = exact + partial + none
-    print("spreadsheet AIs with a usable serial: %d -> lot found exact: %d, partial: %d, not in Odoo: %d"
-          % (total, exact, partial, none))
-    for ai, serial, name, prod in examples:
-        print("  AI %-5s serial %-22r -> lot %-20r %s" % (ai, serial, name, prod))
+            continue
+        counts[key] += 1
+        if len(examples[key]) < 6:
+            examples[key].append((ai, serial, lot))
+    print("spreadsheet AIs resolved to a lot: AI on lot ref: %(ai_on_lot)d, same serial: %(exact)d, "
+          "serial listed in a multi-serial lot: %(listed)d, only partial (verify): %(partial)d, "
+          "not in Odoo: %(none)d" % counts)
+    for key, rows in examples.items():
+        for ai, serial, lot in rows:
+            print("  [%-9s] AI %-5s serial %-24r -> %s" % (key, ai, serial, (
+                "lot %r ref %r (%s)" % (lot["name"], lot.get("ref"), lot["product_id"][1] if lot["product_id"] else "")
+            ) if lot else "-"))
     refs = [l for l in lots if l.get("ref")]
     print("lots with 'Internal Reference' (ref) set: %d%s" % (
         len(refs), "  e.g. " + ", ".join(repr(l["ref"]) for l in refs[:8]) if refs else ""))
@@ -128,8 +132,8 @@ def main(argv):
         print("  match:", r["match"])
         for e in r["lots"]:
             lot = e["lot"]
-            print("  lot id=%s name=%r product=%r customer=%r (%s) repairs=%s open=%s" % (
-                lot["id"], lot["name"], e["product"]["display_name"] if e["product"] else lot.get("product_id"),
+            print("  lot id=%s name=%r ref=%r match=%s product=%r customer=%r (%s) repairs=%s open=%s" % (
+                lot["id"], lot["name"], lot.get("ref"), e["match"], e["product"]["display_name"] if e["product"] else lot.get("product_id"),
                 e["customer"]["name"] if e["customer"] else None, e["customer_source"],
                 [x["name"] for x in e["repairs"]], e["open_repairs"]))
         if len(r["lots"]) == 1 and r["lots"][0]["customer"]:
